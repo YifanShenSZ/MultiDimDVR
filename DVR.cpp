@@ -31,9 +31,9 @@ DVR::~DVR()
 */
 double DVR::oneDimK(const double& deltaX, const double& massX, const int& iii, const int& jjj)
 {
-    double hbar = 1.0, kinetics;
-    if(iii == jjj) kinetics = pow(hbar, 2) * pow(-1, iii - jjj) / 2.0 / massX / pow(deltaX, 2) * (PI * PI / 3.0);
-    else kinetics = pow(hbar, 2) * pow(-1, iii - jjj) / 2.0 / massX / pow(deltaX, 2) * 2.0 / pow(iii - jjj, 2);
+    double kinetics;
+    if(iii == jjj) kinetics = 1.0 / 2.0 / massX / pow(deltaX, 2) * (PI * PI / 3.0);
+    else kinetics = pow(-1, (iii - jjj)%2 ) / 2.0 / massX / pow(deltaX, 2) * 2.0 / pow(iii - jjj, 2);
 
     return kinetics;
 }
@@ -59,31 +59,47 @@ void DVR::buildDVR()
         length = length * NGrids(ii);
     }
 
+    /* Calculate indices */
+    indice.resize(length, NDim);
+    #pragma omp parallel for
+    for(int ll = 0; ll < length; ll++)
+    {
+        int tmpll = ll;
+        for(int dd = 0; dd < NDim; dd++)
+        {
+            int tmp = 1;
+            for(int ii = NDim - 1; ii > dd; ii--)
+            {
+                tmp = tmp * NGrids(ii);
+            }
+            indice(ll, dd) = tmpll/tmp;
+            tmpll = tmpll - indice(ll, dd) * tmp;
+        }
+    }
+
     if(saveMem)
     {
         cout << "saveMem mode is on." << endl; 
+        /* 
+            When saveMem mode is on. Hamiltonian will not be constructed explicitly. 
+            Instead, it will be resized to an (NDim+1)-by-length matrix.
+            The first row stores the potential energy.
+            The others store the kinetic energy for different dimension using the delta iii - jjj.
+        */
+        Hamiltonian.resize(NDim + 1,length);
+        for(int ii = 0; ii < length; ii++)
+        {
+            for(int dd = 0; dd < NDim; dd++)
+            {
+                Coord(dd) = CoordStart(dd) + indice(ii, dd) * dx(dd);
+                Hamiltonian(dd + 1, ii) = oneDimK(dx(dd), mass(dd), 0, ii);
+            }
+            Hamiltonian(0, ii) = PotentialPointer(Coord, NDim);
+        }
     }
     else
     {
         Hamiltonian.resize(length, length);
-
-        /* Calculate indices */
-        indice.resize(length, NDim);
-        #pragma omp parallel for
-        for(int ll = 0; ll < length; ll++)
-        {
-            int tmpll = ll;
-            for(int dd = 0; dd < NDim; dd++)
-            {
-                int tmp = 1;
-                for(int ii = NDim - 1; ii > dd; ii--)
-                {
-                    tmp = tmp * NGrids(ii);
-                }
-                indice(ll, dd) = tmpll/tmp;
-                tmpll = tmpll - indice(ll, dd) * tmp;
-            }
-        }
 
         /* Calculate potentialE and kineticE matrices, add them together */ 
         Hamiltonian = 0.0 * Hamiltonian;
@@ -154,7 +170,7 @@ void DVR::kernel(VectorXd& energies, MatrixXd& states, const int& solverSize, co
         if(saveMem)
         {
             if(!lanczos) cout << endl << "saveMem mode is on. Automatically switch to Lanczos Algorithm." << solverSize << endl;
-            cout << "The reorthogonalized Lanczos Algorithm is used." << endl;
+            cout << "The reorthogonalized Lanczos Algorithm is used." << endl << endl;
             VectorXd q(length), r(length), v(length), alpha(solverSize), beta(solverSize), Coord(NDim);
             MatrixXd T(solverSize, solverSize), Q(length, solverSize);
             /* 
@@ -163,19 +179,19 @@ void DVR::kernel(VectorXd& energies, MatrixXd& states, const int& solverSize, co
                 the first several excited states. 
 
                 In saveMem mode, the Hamiltonian and indice is not initialized. 
-                It will use H_times_V and indexConv instead. 
+                It will use H_times_V and oneD2mD instead. 
             */
-            for(int ii = 0; ii < length; ii++)
-            {
-                VectorXi indices = indexConv(ii);
-                q(ii) = 1.0;
-                for(int dd = 0; dd < NDim; dd++)
-                {
-                    Coord(dd) = CoordStart(dd) + indices(dd) * dx(dd);
-                    double tmpEXP = exp( - pow(Coord(dd), 2) / 2.0);
-                    q(ii) = tmpEXP * (1.0 + Coord(dd) + pow(Coord(dd),2) + pow(Coord(dd),3) + pow(Coord(dd), 4) +pow(Coord(dd), 5) );
-                }
-            }
+            // for(int ii = 0; ii < length; ii++)
+            // {
+            //     q(ii) = 1.0;
+            //     for(int dd = 0; dd < NDim; dd++)
+            //     {
+            //         Coord(dd) = CoordStart(dd) + indice(ii, dd) * dx(dd);
+            //         double tmpEXP = exp( - pow(Coord(dd), 2) / 2.0);
+            //         q(ii) = tmpEXP * (1.0 + Coord(dd) + pow(Coord(dd),2) + pow(Coord(dd),3) + pow(Coord(dd), 4) +pow(Coord(dd), 5) );
+            //     }
+            // }
+            q = VectorXd::Random(length);
             q = q/q.norm();
             
             Q = 0.0 * Q;
@@ -201,6 +217,7 @@ void DVR::kernel(VectorXd& energies, MatrixXd& states, const int& solverSize, co
                 r = r - alpha(jj) * q;
                 r = r - Q.block(0, 0, length, jj)*(Q.block(0, 0, length, jj).transpose()*r);
                 beta(jj) = r.norm(); 
+                cout << "beta_" << jj + 1 << " = " << beta(jj) << endl;
 
                 T(jj, jj) = alpha(jj);
                 if(jj != solverSize - 1)
@@ -220,7 +237,7 @@ void DVR::kernel(VectorXd& energies, MatrixXd& states, const int& solverSize, co
         {
             if(lanczos)
             {
-                cout << "The reorthogonalized Lanczos Algorithm is used." << endl;
+                cout << "The reorthogonalized Lanczos Algorithm is used." << endl << endl;
                 VectorXd q(length), r(length), v(length), alpha(solverSize), beta(solverSize), Coord(NDim);
                 MatrixXd T(solverSize, solverSize), Q(length, solverSize);
                 /* 
@@ -228,16 +245,18 @@ void DVR::kernel(VectorXd& energies, MatrixXd& states, const int& solverSize, co
                     as the initial Lanczos vector q. In this way, we want to the subspace includes
                     the first several excited states. 
                 */
-                for(int ii = 0; ii < length; ii++)
-                {
-                    q(ii) = 1.0;
-                    for(int dd = 0; dd < NDim; dd++)
-                    {
-                        Coord(dd) = CoordStart(dd) + indice(ii, dd) * dx(dd);
-                        double tmpEXP = exp( - pow(Coord(dd), 2) / 2.0);
-                        q(ii) = tmpEXP * (1.0 + Coord(dd) + pow(Coord(dd),2) + pow(Coord(dd),3) + pow(Coord(dd), 4) +pow(Coord(dd), 5) );
-                    }
-                }
+                // for(int ii = 0; ii < length; ii++)
+                // {
+                //     q(ii) = 1.0;
+                //     for(int dd = 0; dd < NDim; dd++)
+                //     {
+                //         Coord(dd) = CoordStart(dd) + indice(ii, dd) * dx(dd);
+                //         double tmpEXP = exp( - pow(Coord(dd), 2) / 2.0);
+                //         q(ii) = tmpEXP * (1.0 + Coord(dd) + pow(Coord(dd),2) + pow(Coord(dd),3) + pow(Coord(dd), 4) +pow(Coord(dd), 5) );
+                //     }
+                // }
+                q = VectorXd::Random(length);/////
+                cout << q(0) << q(10) << q(20) << endl;
                 q = q/q.norm();
 
                 Q = 0.0 * Q;
@@ -263,6 +282,7 @@ void DVR::kernel(VectorXd& energies, MatrixXd& states, const int& solverSize, co
                     r = r - alpha(jj) * q;
                     r = r - Q.block(0, 0, length, jj)*(Q.block(0, 0, length, jj).transpose()*r);
                     beta(jj) = r.norm(); 
+                    cout << "beta_" << jj + 1 << " = " << beta(jj) << endl;
 
                     T(jj, jj) = alpha(jj);
                     if(jj != solverSize - 1)
@@ -296,11 +316,11 @@ void DVR::kernel(VectorXd& energies, MatrixXd& states, const int& solverSize, co
 
 /*
     Special evaluation functions used in memory saving purpose.
-    indexConv(lll) equivalently returns lll th row in indice.
+    oneD2mD(lll) equivalently returns lll th row in indice.
     eltsH(iii, jjj) returns H(iii, jjj) without store an explicit matrix
     H_times_V(V) returns product of Hamiltonian and V.
 */
-VectorXi DVR::indexConv(const int& lll)
+inline VectorXi DVR::oneD2mD(const int& lll)const
 {
     VectorXi indiceMD(NDim);
     int tmpll = lll;
@@ -316,19 +336,21 @@ VectorXi DVR::indexConv(const int& lll)
     }
     return indiceMD;
 }
-double DVR::eltsH(const int& iii, const int& jjj)
+inline int DVR::mD2oneD(const VectorXi& indicesMD)const
+{
+    int tmp = 1, returnValue = 0;
+	for(int ii = NDim - 1; ii >= 0; ii--)
+	{
+		returnValue += tmp * indicesMD(ii);
+		tmp = tmp * NGrids(ii);
+	}
+
+	return returnValue;
+}
+double DVR::eltsH(const int& iii, const int& jjj)const
 {
     double element = 0.0;
-    VectorXi indicesMDi = indexConv(iii), indicesMDj = indexConv(jjj);
-    if(iii == jjj)
-    {
-        VectorXd Coord(NDim);
-        for(int dd = 0; dd < NDim; dd++)
-        {
-            Coord(dd) = CoordStart(dd) + indicesMDi(dd) * dx(dd);
-        }
-        element += PotentialPointer(Coord, NDim);
-    }
+    if(iii == jjj) element += Hamiltonian(0, iii);
     #pragma omp parallel for
     for(int dd = 0; dd < NDim; dd++)
     {
@@ -338,15 +360,15 @@ double DVR::eltsH(const int& iii, const int& jjj)
             /* These "if" are the delta symbols in equ.(2.6) */
             if(ddtmp != dd)
             {
-                if(indicesMDi(ddtmp) != indicesMDj(ddtmp)) Ktmp = false;
+                if(indice(iii, ddtmp) != indice(jjj, ddtmp)) Ktmp = false;
             }
         }
-        if(Ktmp) element = element + oneDimK(dx(dd), mass(dd), indicesMDi(dd), indicesMDj(dd));
+        if(Ktmp) element = element + Hamiltonian(dd + 1, abs(indice(iii, dd) - indice(jjj, dd)));
     }
     
     return element;
 }
-VectorXd DVR::H_times_V(const VectorXd& V)
+VectorXd DVR::H_times_V(const VectorXd& V)const
 {
     if(V.rows() != length)
     {
@@ -359,10 +381,18 @@ VectorXd DVR::H_times_V(const VectorXd& V)
         #pragma omp parallel for
         for(int ii = 0; ii < length; ii++)
         {
-            HV(ii) = 0;
-            for(int jj = 0; jj < length; jj++)
-            {  
-                HV(ii) += eltsH(ii, jj) * V(jj);
+            VectorXi indicesMD = indice.block(ii,0,1,NDim).transpose();
+            HV(ii) = Hamiltonian(0, ii) * V(ii);
+            for(int dd = 0; dd < NDim; dd++)
+            {
+                double tmp = 0.0;
+                VectorXi indicesMDtmp = indicesMD;
+                for(int jj = 0; jj < NGrids(dd); jj++)
+                {
+                    indicesMDtmp(dd) = jj;
+                    tmp += Hamiltonian(dd + 1, abs(jj - indicesMD(dd))) * V(mD2oneD(indicesMDtmp));
+                }
+                HV(ii) += tmp;
             }
         }
         return HV;

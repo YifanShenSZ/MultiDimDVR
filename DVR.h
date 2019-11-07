@@ -40,9 +40,10 @@ private:
     void buildDVR();
 
     /* Special evaluation functions used in memory saving purpose */
-    VectorXd H_times_V(const VectorXd& V);
-    VectorXi indexConv(const int& lll);
-    double eltsH(const int& iii, const int& jjj);
+    VectorXd H_times_V(const VectorXd& V)const;
+    VectorXi oneD2mD(const int& lll)const;
+    int mD2oneD(const VectorXi& indicesMD)const;
+    double eltsH(const int& iii, const int& jjj)const;
 public:
     /* Construction function */
     DVR(const int& NDim_, const VectorXi& NGrids_, const VectorXd& CoordStart_, const VectorXd& CoordEnd_, const VectorXd& mass_, double (* PotentialPointer_)(const VectorXd& Coord, const int& ND), const bool& saveMem_ = false);
