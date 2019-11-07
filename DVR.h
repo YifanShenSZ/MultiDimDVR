@@ -4,7 +4,7 @@
 using namespace Eigen;
 
 /*
-    Class for multidimensional cartesian coordinates DVR solver
+    Class for multidimensional DVR solver
     Ref: J. Chem. Phys. 96, 1982 (1992); https://doi.org/10.1063/1.462100
     
     **** Eigen3 is required ****
@@ -28,18 +28,24 @@ using namespace Eigen;
 class DVR
 {
 private:
-    int NDim;
+    int NDim, length;
     VectorXd CoordStart, CoordEnd, mass, dx, eigenValues;
-    MatrixXd potentialE, kineticE, Hamiltonian, eigenStates;
-    MatrixXi NGrids, indice;
-    bool solved = false;
-    double (* PotentialPointer)(const VectorXd& Coord);
+    MatrixXd Hamiltonian, eigenStates;
+    MatrixXi indice;
+    VectorXi NGrids;
+    bool solved = false, saveMem = false;
+    double (* PotentialPointer)(const VectorXd& Coord, const int& ND);
 
     /* Initialization */
     void buildDVR();
+
+    /* Special evaluation functions used in memory saving purpose */
+    VectorXd H_times_V(const VectorXd& V);
+    VectorXi indexConv(const int& lll);
+    double eltsH(const int& iii, const int& jjj);
 public:
     /* Construction function */
-    DVR(const int& NDim_, const VectorXi& NGrids_, const VectorXd& CoordStart_, const VectorXd& CoordEnd_, const VectorXd& mass_, double (* PotentialPointer_)(const VectorXd& Coord));
+    DVR(const int& NDim_, const VectorXi& NGrids_, const VectorXd& CoordStart_, const VectorXd& CoordEnd_, const VectorXd& mass_, double (* PotentialPointer_)(const VectorXd& Coord, const int& ND), const bool& saveMem_ = false);
 	
     ~DVR();
 
@@ -47,14 +53,15 @@ public:
     double oneDimK(const double& deltaX, const double& massX, const int& iii, const int& jjj);
     
     /* Solving the eigen-values and eigen-vectors for Hamiltonian */
-    void kernel();
+    void kernel(VectorXd& energies, MatrixXd& states);
+    void kernel(VectorXd& energies, MatrixXd& states, const int& solverSize, const bool& lanczos = false);
 
     /* Public functions to get corresponding private matrices */
     MatrixXd getHamiltonian();
-    MatrixXd getKineticE();
-    MatrixXd getPotentialE();
     MatrixXd getEigenStates();
     VectorXd getEigenValues();
 };
+
+const double PI = 2 * asin(1.0);
 
 #endif

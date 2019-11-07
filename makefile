@@ -1,10 +1,12 @@
 CPP = icpc
-CPPFLAG = -O3 -std=c++11 -qopenmp
+CPPFLAG = -O3 -std=c++11 -qopenmp -mkl -DEIGEN_USE_MKL_ALL
 EIGEN = ~/apps/Eigen3
-TEST = main.o DVR.o
+cpplibI = ~/git_projects/cpp_lib/include
+cpplibL = ~/git_projects/cpp_lib/lib
+TEST = main.o DVR.o interpolation.o
 
 DVR_md.exe: ${TEST}
-	${CPP} ${CPPFLAG} -o DVR_md.exe -I ${EIGEN} ${TEST}
+	${CPP} ${CPPFLAG} -I ${EIGEN} ${TEST} -L ${cpplibL} -lmkl_interface -o DVR_md.exe
 
 
 %.o: %.cpp
