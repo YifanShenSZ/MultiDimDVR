@@ -1,5 +1,6 @@
 #include"DVR.h"
 #include<iostream>
+#include<fstream>
 #include<Eigen/Dense>
 #include"mkl_interface.h"
 #include<omp.h>
@@ -9,9 +10,9 @@ using namespace std;
 /* 
     Construction function with initialization 
 */
-DVR::DVR(const int& NDim_, const VectorXi& NGrids_, const VectorXd& CoordStart_, const VectorXd& CoordEnd_, const VectorXd& mass_, double (* PotentialPointer_)(const VectorXd& Coord, const int& ND), const bool &saveMem_)
+DVR::DVR(const int& NDim_, const VectorXi& NGrids_, const VectorXd& CoordStart_, const VectorXd& CoordEnd_, const VectorXd& mass_, MatrixXd (* PotentialPointer_)(const VectorXd& Coord, const int& ND), const int& NStates_, const bool &saveMem_, const bool& readPESfromFile_)
 : NDim(NDim_), NGrids(NGrids_), CoordStart(CoordStart_), saveMem(saveMem_), 
-CoordEnd(CoordEnd_), mass(mass_), PotentialPointer(PotentialPointer_)
+CoordEnd(CoordEnd_), mass(mass_), PotentialPointer(PotentialPointer_), NStates(NStates_), readPESfromFile(readPESfromFile_)
 {
     dx.resize(NDim_);
     for(int ii = 0; ii < NDim_; ii++)
@@ -79,6 +80,11 @@ void DVR::buildDVR()
 
     if(saveMem)
     {
+        if(NStates > 2)
+        {
+            cout << "When more than two states is included, saveMem mode is NOT supported." << endl;
+            exit(99);
+        }
         cout << "saveMem mode is on." << endl; 
         /* 
             When saveMem mode is on. Hamiltonian will not be constructed explicitly. 
@@ -86,31 +92,103 @@ void DVR::buildDVR()
             The first row stores the potential energy.
             The others store the kinetic energy for different dimension using the delta iii - jjj.
         */
-        Hamiltonian.resize(NDim + 1,length);
+        int size_nstates = NStates * (NStates + 1) / 2; 
+        Hamiltonian.resize(NDim + size_nstates, length * NStates);
+        if(readPESfromFile)
+        {
+            if(NStates > 1)
+            {
+                cout << "When more than one states is included, reading PES from file is NOT supported." << endl;
+                exit(99);
+            }
+            ifstream ifs;
+            int tmp;
+            ifs.open("PESinput");
+            ifs >> tmp;
+            if(tmp != length)
+            {
+                cout << "data in PESinput does not match the Hamiltonian size";
+                ifs.close();
+                exit(99);
+            }
+            else
+            {
+                for(int ii = 0; ii < length; ii++)
+                {
+                    ifs >> Hamiltonian(0, ii);
+                }
+            }
+            ifs.close();
+        }
         for(int ii = 0; ii < length; ii++)
         {
             for(int dd = 0; dd < NDim; dd++)
             {
                 Coord(dd) = CoordStart(dd) + indice(ii, dd) * dx(dd);
-                Hamiltonian(dd + 1, ii) = oneDimK(dx(dd), mass(dd), 0, ii);
+                Hamiltonian(dd + size_nstates, ii) = oneDimK(dx(dd), mass(dd), 0, ii);
             }
-            Hamiltonian(0, ii) = PotentialPointer(Coord, NDim);
+            if(!readPESfromFile) 
+            {
+                Hamiltonian(0, ii) = PotentialPointer(Coord, NDim)(0,0);
+                if(NStates == 2)
+                {
+                    Hamiltonian(1, ii) = PotentialPointer(Coord, NDim)(1,1);
+                    Hamiltonian(2, ii) = PotentialPointer(Coord, NDim)(1,0);
+                }
+            }
         }
     }
     else
     {
-        Hamiltonian.resize(length, length);
+        Hamiltonian.resize(length * NStates, length * NStates);
 
         /* Calculate potentialE and kineticE matrices, add them together */ 
         Hamiltonian = 0.0 * Hamiltonian;
+        if(readPESfromFile)
+        {
+            if(NStates > 1)
+            {
+                cout << "When more than one states is included, reading PES from file is NOT supported." << endl;
+                exit(99);
+            }
+            ifstream ifs;
+            int tmp;
+            ifs.open("PESinput");
+            ifs >> tmp;
+            if(tmp != length)
+            {
+                cout << "data in PESinput does not match the Hamiltonian size";
+                ifs.close();
+                exit(99);
+            }
+            else
+            {
+                for(int ii = 0; ii < length; ii++)
+                {
+                    ifs >> Hamiltonian(ii, ii);
+                }
+            }
+            ifs.close();
+        }
         for(int ii = 0; ii < length; ii++)
         {
-            for(int dd = 0; dd < NDim; dd++)
+            if(!readPESfromFile)
             {
-                Coord(dd) = CoordStart(dd) + indice(ii, dd) * dx(dd);
+                for(int dd = 0; dd < NDim; dd++)
+                {
+                    Coord(dd) = CoordStart(dd) + indice(ii, dd) * dx(dd);
+                }
+                MatrixXd pesTMP = PotentialPointer(Coord, NDim);
+
+                /* This is correct only for diabatic Hamiltonian */
+                for(int ss1 = 0; ss1 < NStates; ss1++)
+                for(int ss2 = 0; ss2 < NStates; ss2++)
+                {
+                    Hamiltonian(ss1*length + ii, ss2*length + ii) = pesTMP(ss1, ss2);
+                }
+                
+                // std::cout << Coord(0) << "\t" << potentialE(ii, ii) << std::endl;
             }
-            Hamiltonian(ii, ii) += PotentialPointer(Coord, NDim);
-            // std::cout << Coord(0) << "\t" << potentialE(ii, ii) << std::endl;
             for(int jj = 0; jj < length; jj++)
             {
                 double tmp = 0.0;
@@ -127,7 +205,11 @@ void DVR::buildDVR()
                     }
                     if(Ktmp) tmp = tmp + oneDimK(dx(dd), mass(dd), indice(ii, dd), indice(jj, dd));
                 }
-                Hamiltonian(ii, jj) += tmp;
+                for(int ss = 0; ss < NStates; ss++)
+                {
+                    Hamiltonian(ss*length + ii, ss*length + jj) += tmp;
+                }
+                // Hamiltonian(ii, jj) += tmp;
             }
         }
     }
@@ -171,8 +253,8 @@ void DVR::kernel(VectorXd& energies, MatrixXd& states, const int& solverSize, co
         {
             if(!lanczos) cout << endl << "saveMem mode is on. Automatically switch to Lanczos Algorithm." << solverSize << endl;
             cout << "The reorthogonalized Lanczos Algorithm is used." << endl << endl;
-            VectorXd q(length), r(length), v(length), alpha(solverSize), beta(solverSize), Coord(NDim);
-            MatrixXd T(solverSize, solverSize), Q(length, solverSize);
+            VectorXd q(length * NStates), r(length * NStates), v(length * NStates), alpha(solverSize), beta(solverSize), Coord(NDim);
+            MatrixXd T(solverSize, solverSize), Q(length * NStates, solverSize);
             /* 
                 Using Harmonic Oscillator states (Gaussian function times polynomial) 
                 as the initial Lanczos vector q. In this way, we want to the subspace includes
@@ -181,23 +263,13 @@ void DVR::kernel(VectorXd& energies, MatrixXd& states, const int& solverSize, co
                 In saveMem mode, the Hamiltonian and indice is not initialized. 
                 It will use H_times_V and oneD2mD instead. 
             */
-            // for(int ii = 0; ii < length; ii++)
-            // {
-            //     q(ii) = 1.0;
-            //     for(int dd = 0; dd < NDim; dd++)
-            //     {
-            //         Coord(dd) = CoordStart(dd) + indice(ii, dd) * dx(dd);
-            //         double tmpEXP = exp( - pow(Coord(dd), 2) / 2.0);
-            //         q(ii) = tmpEXP * (1.0 + Coord(dd) + pow(Coord(dd),2) + pow(Coord(dd),3) + pow(Coord(dd), 4) +pow(Coord(dd), 5) );
-            //     }
-            // }
-            q = VectorXd::Random(length);
+            q = VectorXd::Random(length * NStates);
             q = q/q.norm();
             
             Q = 0.0 * Q;
             T = 0.0 * T;
             #pragma omp parallel for
-            for(int kk = 0; kk < length; kk++)  Q(kk, 0) = q(kk);
+            for(int kk = 0; kk < length * NStates; kk++)  Q(kk, 0) = q(kk);
             r = H_times_V(q);
             alpha(0) = q.transpose() * r;
             r = r -alpha(0) * q;
@@ -211,11 +283,11 @@ void DVR::kernel(VectorXd& energies, MatrixXd& states, const int& solverSize, co
                 v = q;
                 q = r/beta[jj - 1];
                 #pragma omp parallel for
-                for(int kk = 0; kk < length; kk++)  Q(kk, jj) = q(kk);
+                for(int kk = 0; kk < length * NStates; kk++)  Q(kk, jj) = q(kk);
                 r = H_times_V(q) - beta(jj - 1) * v;
                 alpha(jj) = q.transpose() * r;
                 r = r - alpha(jj) * q;
-                r = r - Q.block(0, 0, length, jj)*(Q.block(0, 0, length, jj).transpose()*r);
+                r = r - Q.block(0, 0, length * NStates, jj)*(Q.block(0, 0, length * NStates, jj).transpose()*r);
                 beta(jj) = r.norm(); 
                 cout << "beta_" << jj + 1 << " = " << beta(jj) << endl;
 
@@ -238,8 +310,8 @@ void DVR::kernel(VectorXd& energies, MatrixXd& states, const int& solverSize, co
             if(lanczos)
             {
                 cout << "The reorthogonalized Lanczos Algorithm is used." << endl << endl;
-                VectorXd q(length), r(length), v(length), alpha(solverSize), beta(solverSize), Coord(NDim);
-                MatrixXd T(solverSize, solverSize), Q(length, solverSize);
+                VectorXd q(length * NStates), r(length * NStates), v(length * NStates), alpha(solverSize), beta(solverSize), Coord(NDim);
+                MatrixXd T(solverSize, solverSize), Q(length * NStates, solverSize);
                 /* 
                     Using Harmonic Oscillator states (Gaussian function times polynomial) 
                     as the initial Lanczos vector q. In this way, we want to the subspace includes
@@ -255,14 +327,14 @@ void DVR::kernel(VectorXd& energies, MatrixXd& states, const int& solverSize, co
                 //         q(ii) = tmpEXP * (1.0 + Coord(dd) + pow(Coord(dd),2) + pow(Coord(dd),3) + pow(Coord(dd), 4) +pow(Coord(dd), 5) );
                 //     }
                 // }
-                q = VectorXd::Random(length);/////
+                q = VectorXd::Random(length * NStates);/////
                 cout << q(0) << q(10) << q(20) << endl;
                 q = q/q.norm();
 
                 Q = 0.0 * Q;
                 T = 0.0 * T;
                 #pragma omp parallel for
-                for(int kk = 0; kk < length; kk++)  Q(kk, 0) = q(kk);
+                for(int kk = 0; kk < length * NStates; kk++)  Q(kk, 0) = q(kk);
                 r = Hamiltonian * q;
                 alpha(0) = q.transpose() * r;
                 r = r -alpha(0) * q;
@@ -276,11 +348,11 @@ void DVR::kernel(VectorXd& energies, MatrixXd& states, const int& solverSize, co
                     v = q;
                     q = r/beta[jj - 1];
                     #pragma omp parallel for
-                    for(int kk = 0; kk < length; kk++)  Q(kk, jj) = q(kk);
+                    for(int kk = 0; kk < length * NStates; kk++)  Q(kk, jj) = q(kk);
                     r = Hamiltonian * q - beta(jj - 1) * v;
                     alpha(jj) = q.transpose() * r;
                     r = r - alpha(jj) * q;
-                    r = r - Q.block(0, 0, length, jj)*(Q.block(0, 0, length, jj).transpose()*r);
+                    r = r - Q.block(0, 0, length * NStates, jj)*(Q.block(0, 0, length * NStates, jj).transpose()*r);
                     beta(jj) = r.norm(); 
                     cout << "beta_" << jj + 1 << " = " << beta(jj) << endl;
 
@@ -300,7 +372,7 @@ void DVR::kernel(VectorXd& energies, MatrixXd& states, const int& solverSize, co
             }
             else
             {
-                if(SYM_EIGEN_D(Hamiltonian, length, energies, states, solverSize) > 0)
+                if(SYM_EIGEN_D(Hamiltonian, length * NStates, energies, states, solverSize) > 0)
                 {
                     cout << "SYM_EIGEN_D does not work well." << endl;
                     exit(99);
@@ -317,7 +389,6 @@ void DVR::kernel(VectorXd& energies, MatrixXd& states, const int& solverSize, co
 /*
     Special evaluation functions used in memory saving purpose.
     oneD2mD(lll) equivalently returns lll th row in indice.
-    eltsH(iii, jjj) returns H(iii, jjj) without store an explicit matrix
     H_times_V(V) returns product of Hamiltonian and V.
 */
 inline VectorXi DVR::oneD2mD(const int& lll)const
@@ -347,54 +418,86 @@ inline int DVR::mD2oneD(const VectorXi& indicesMD)const
 
 	return returnValue;
 }
-double DVR::eltsH(const int& iii, const int& jjj)const
-{
-    double element = 0.0;
-    if(iii == jjj) element += Hamiltonian(0, iii);
-    #pragma omp parallel for
-    for(int dd = 0; dd < NDim; dd++)
-    {
-        bool Ktmp = true;
-        for(int ddtmp = 0; ddtmp < NDim; ddtmp++)
-        {
-            /* These "if" are the delta symbols in equ.(2.6) */
-            if(ddtmp != dd)
-            {
-                if(indice(iii, ddtmp) != indice(jjj, ddtmp)) Ktmp = false;
-            }
-        }
-        if(Ktmp) element = element + Hamiltonian(dd + 1, abs(indice(iii, dd) - indice(jjj, dd)));
-    }
-    
-    return element;
-}
+
 VectorXd DVR::H_times_V(const VectorXd& V)const
 {
-    if(V.rows() != length)
+    if(V.rows() != length * NStates)
     {
         std::cout << "The Size of V is inconsistent with H in H_times_V." << std::endl;
         exit(99);
     }
     else
     {
-        VectorXd HV(length);
-        #pragma omp parallel for
-        for(int ii = 0; ii < length; ii++)
+        VectorXd HV(length * NStates);
+        HV = HV * 0.0;
+        int size_states = NStates * (NStates + 1) / 2;
+        if(NStates == 1)
         {
-            VectorXi indicesMD = indice.block(ii,0,1,NDim).transpose();
-            HV(ii) = Hamiltonian(0, ii) * V(ii);
-            for(int dd = 0; dd < NDim; dd++)
+            #pragma omp parallel for
+            for(int ii = 0; ii < length; ii++)
             {
-                double tmp = 0.0;
-                VectorXi indicesMDtmp = indicesMD;
-                for(int jj = 0; jj < NGrids(dd); jj++)
+                VectorXi indicesMD = indice.block(ii,0,1,NDim).transpose();
+                HV(ii) = Hamiltonian(0, ii) * V(ii);
+                for(int dd = 0; dd < NDim; dd++)
                 {
-                    indicesMDtmp(dd) = jj;
-                    tmp += Hamiltonian(dd + 1, abs(jj - indicesMD(dd))) * V(mD2oneD(indicesMDtmp));
+                    double tmp = 0.0;
+                    VectorXi indicesMDtmp = indicesMD;
+                    for(int jj = 0; jj < NGrids(dd); jj++)
+                    {
+                        indicesMDtmp(dd) = jj;
+                        tmp += Hamiltonian(dd + size_states, abs(jj - indicesMD(dd))) * V(mD2oneD(indicesMDtmp));
+                    }
+                    HV(ii) += tmp;
                 }
-                HV(ii) += tmp;
             }
         }
+        else if (NStates == 2)
+        {
+            #pragma omp parallel for
+            for(int ii = 0; ii < length; ii++)
+            {
+                VectorXi indicesMD = indice.block(ii,0,1,NDim).transpose();
+                HV(ii) += Hamiltonian(0, ii) * V(ii);
+                HV(ii) += Hamiltonian(2, ii) * V(ii + length);
+                for(int dd = 0; dd < NDim; dd++)
+                {
+                    double tmp = 0.0;
+                    VectorXi indicesMDtmp = indicesMD;
+                    for(int jj = 0; jj < NGrids(dd); jj++)
+                    {
+                        indicesMDtmp(dd) = jj;
+                        tmp += Hamiltonian(dd + size_states, abs(jj - indicesMD(dd))) * V(mD2oneD(indicesMDtmp));
+                    }
+                    HV(ii) += tmp;
+                }
+            }
+            #pragma omp parallel for
+            for(int ii = 0; ii < length; ii++)
+            {
+                VectorXi indicesMD = indice.block(ii,0,1,NDim).transpose();
+                HV(ii + length) += Hamiltonian(1, ii) * V(ii + length);
+                HV(ii + length) += Hamiltonian(2, ii) * V(ii);
+                for(int dd = 0; dd < NDim; dd++)
+                {
+                    double tmp = 0.0;
+                    VectorXi indicesMDtmp = indicesMD;
+                    for(int jj = 0; jj < NGrids(dd); jj++)
+                    {
+                        indicesMDtmp(dd) = jj;
+                        tmp += Hamiltonian(dd + size_states, abs(jj - indicesMD(dd))) * V(mD2oneD(indicesMDtmp) + length);
+                    }
+                    HV(ii + length) += tmp;
+                }
+            }
+        }
+        else
+        {
+            cout << "ERROR NStates > 2 and saveMem is on." << endl;
+            exit(99);
+        }
+        
+        
+        
         return HV;
     }
 }

@@ -11,6 +11,7 @@ using namespace Eigen;
 
     Parameters:
         NDim:               Dimension number
+        NStates:            Number of states included in DVR
         CoordStart:         Starting points for different dimension
         CoordEnd:           Ending points for different dimension
         mass:               Effective mass for different dimension
@@ -28,13 +29,13 @@ using namespace Eigen;
 class DVR
 {
 private:
-    int NDim, length;
+    int NDim, NStates, length;
     VectorXd CoordStart, CoordEnd, mass, dx, eigenValues;
     MatrixXd Hamiltonian, eigenStates;
     MatrixXi indice;
     VectorXi NGrids;
-    bool solved = false, saveMem = false;
-    double (* PotentialPointer)(const VectorXd& Coord, const int& ND);
+    bool solved = false, saveMem = false, readPESfromFile = false;
+    MatrixXd (* PotentialPointer)(const VectorXd& Coord, const int& ND);
 
     /* Initialization */
     void buildDVR();
@@ -43,10 +44,9 @@ private:
     VectorXd H_times_V(const VectorXd& V)const;
     VectorXi oneD2mD(const int& lll)const;
     int mD2oneD(const VectorXi& indicesMD)const;
-    double eltsH(const int& iii, const int& jjj)const;
 public:
     /* Construction function */
-    DVR(const int& NDim_, const VectorXi& NGrids_, const VectorXd& CoordStart_, const VectorXd& CoordEnd_, const VectorXd& mass_, double (* PotentialPointer_)(const VectorXd& Coord, const int& ND), const bool& saveMem_ = false);
+    DVR(const int& NDim_, const VectorXi& NGrids_, const VectorXd& CoordStart_, const VectorXd& CoordEnd_, const VectorXd& mass_, MatrixXd (* PotentialPointer_)(const VectorXd& Coord, const int& ND), const int& NStates_ = 1, const bool& saveMem_ = false, const bool& readPESfromFile_ = false);
 	
     ~DVR();
 

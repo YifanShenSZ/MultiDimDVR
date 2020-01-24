@@ -12,7 +12,7 @@
 using namespace std;
 using namespace Eigen;
 
-double potentialFunction(const VectorXd& Coord);
+MatrixXd potentialFunction(const VectorXd& Coord, const int& NDim);
 
 int main()
 {
@@ -20,10 +20,12 @@ int main()
     int NDim = 2;
     VectorXi NGrids(2);
     VectorXd mass(2), CoordStart(2), CoordEnd(2);
+    VectorXd energies;
+    MatrixXd states;
     NGrids << 50, 50;
     mass << 1.0, 1.0;
-    CoordStart << -10.0, -10.0;
-    CoordEnd << 10.0, 10.0;
+    CoordStart << -5.0, -5.0;
+    CoordEnd << 5.0, 5.0;
     
     /* Input example for 3-dimensional*/
     // int NDim = 3;
@@ -44,25 +46,29 @@ int main()
     // CoordStart << -10.0;
     // CoordEnd << 10.0;
 
-    DVR dvrtest(NDim, NGrids, CoordStart, CoordEnd, mass, potentialFunction);
+    DVR dvrtest(NDim, NGrids, CoordStart, CoordEnd, mass, potentialFunction, 2, true);
 
-    cout << "DVR object has been initialized." << endl;
 
-    dvrtest.kernel();
-
-    cout << dvrtest.getEigenValues().block(0, 0, 20, 1) << endl;
+    dvrtest.kernel(energies, states, 800, true);
+    // cout << energies.rows() << endl;
+    cout << energies.block(0,0,20,1) << endl;
     cout << "Program finished normally." << endl;
     return 0;
 }
 
 
-double potentialFunction(const VectorXd& Coord)
+MatrixXd potentialFunction(const VectorXd& Coord, const int& NDim)
 {
-    double V = 0.0;
-    for(int ii = 0; ii < Coord.rows(); ii++)
+    // double V = 0.0;
+    MatrixXd V(2, 2);
+    V = V * 0.0;
+    for(int ii = 0; ii < NDim; ii++)
     {
-        V = V + 0.5 * pow(Coord(ii), 2);
+        V(0, 0) = V(0, 0) + 0.5 * pow(Coord(ii), 2);
+        V(1, 1) = V(1, 1) + 0.5 * pow(Coord(ii), 2);
     }
+    // V(0,1) = 1.0;
+    // V(1,0) = 1.0;
 
     return V;
 }
