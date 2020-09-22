@@ -32,7 +32,8 @@ private:
     int NDim, NStates, length;
     VectorXd CoordStart, CoordEnd, mass, dx;
     VectorXcd eigenValues;
-    MatrixXcd Hamiltonian, eigenStates;
+    MatrixXd kineticT;
+    MatrixXcd potentialV, eigenStates;
     MatrixXi indice;
     VectorXi NGrids;
     bool solved = false, saveMem = false, readPESfromFile = false;
@@ -42,7 +43,7 @@ private:
     void buildDVR();
 
     /* Special evaluation functions used in memory saving purpose */
-    VectorXcd H_times_V(const VectorXcd& V)const;
+    void H_times_V(const VectorXcd& V, VectorXcd& result)const;
     VectorXi oneD2mD(const int& lll)const;
     int mD2oneD(const VectorXi& indicesMD)const;
 public:

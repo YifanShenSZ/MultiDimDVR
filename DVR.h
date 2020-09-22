@@ -31,7 +31,7 @@ class DVR
 private:
     int NDim, NStates, length;
     VectorXd CoordStart, CoordEnd, mass, dx, eigenValues;
-    MatrixXd Hamiltonian, eigenStates;
+    MatrixXd kineticT, potentialV, eigenStates;
     MatrixXi indice;
     VectorXi NGrids;
     bool solved = false, saveMem = false, readPESfromFile = false;
@@ -41,7 +41,7 @@ private:
     void buildDVR();
 
     /* Special evaluation functions used in memory saving purpose */
-    VectorXd H_times_V(const VectorXd& V)const;
+    void H_times_V(const VectorXd& V, VectorXd& result)const;
     VectorXi oneD2mD(const int& lll)const;
     int mD2oneD(const VectorXi& indicesMD)const;
 public:
@@ -63,6 +63,5 @@ public:
     VectorXd getEigenValues();
 };
 
-const double PI = 2 * asin(1.0);
 
 #endif
